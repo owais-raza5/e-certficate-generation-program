@@ -1,48 +1,17 @@
-const fs = require('node:fs/promises');
-const path = require('node:path');
-const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
-const fontkit = require('@pdf-lib/fontkit');
-const { parse } = require('csv-parse/sync');
-
-const CONFIG = {
-  paths: {
-    template: path.join(__dirname, 'certificate.pdf'),
-    csv: path.join(__dirname, 'data.csv'),
-    outputDir: path.join(__dirname, 'output'),
-    fonts: {
-      name: path.join(__dirname, 'fonts', 'Parisienne-Regular.ttf'),
-      body: path.join(__dirname, 'fonts', 'Poppins-Regular.ttf'),
-      bodyBold: path.join(__dirname, 'fonts', 'Poppins-Bold.ttf'),
-    },
-  },
-  text: {
-    name: {
-      y: 310,
-      size: 64,
-      color: rgb(0.12, 0.12, 0.12),
-      autoCenter: true,
-    },
-    course: {
-      y: 220,
-      size: 24,
-      color: rgb(0.18, 0.18, 0.18),
-      autoCenter: true,
-    },
-    date: {
-      y: 190,
-      size: 18,
-      color: rgb(0.25, 0.25, 0.25),
-      autoCenter: true,
-    },
-  },
-};
+const fs = require("node:fs/promises");
+const path = require("node:path");
+const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
+const fontkit = require("@pdf-lib/fontkit");
+const { parse } = require("csv-parse/sync");
+const nodemailer = require("nodemailer");
+const { CONFIG } = require("./config");
 
 function sanitizeFileName(value) {
   return value
     .trim()
-    .normalize('NFKC')
-    .replace(/[\\/:*?"<>|]/g, '')
-    .replace(/\s+/g, '_');
+    .normalize("NFKC")
+    .replace(/[\\/:*?"<>|]/g, "")
+    .replace(/\s+/g, "_");
 }
 
 async function ensureOutputDir(outputDir) {
@@ -50,7 +19,7 @@ async function ensureOutputDir(outputDir) {
 }
 
 async function loadParticipants(csvPath) {
-  const csvContent = await fs.readFile(csvPath, 'utf8');
+  const csvContent = await fs.readFile(csvPath, "utf8");
   const rows = parse(csvContent, {
     columns: true,
     skip_empty_lines: true,
@@ -62,16 +31,33 @@ async function loadParticipants(csvPath) {
     .map((row, index) => ({
       rowNumber: index + 2,
       name: row.name,
+      email: row.email,
       course: row.course,
-      date: row.date,
+      position: row.position,
     }))
-    .filter((row) => row.name && row.course && row.date);
+    .filter((row) => row.name && row.course);
 
   if (participants.length === 0) {
-    throw new Error('No valid rows found in data.csv. Required columns: name, course, date');
+    throw new Error(
+      "No valid rows found in data.csv. Required columns: name, course",
+    );
   }
 
   return participants;
+}
+
+function resolveTemplatePath(position) {
+  const key = (position || "").trim().toLowerCase();
+  const templatePath = CONFIG.paths.templates[key];
+
+  if (!templatePath) {
+    const valid = Object.keys(CONFIG.paths.templates).join(", ");
+    throw new Error(
+      `Unknown position "${position}". Valid values are: ${valid}`,
+    );
+  }
+
+  return templatePath;
 }
 
 async function loadFontFromFile(pdfDoc, fontPath, fallbackStandardFont, label) {
@@ -82,7 +68,7 @@ async function loadFontFromFile(pdfDoc, fontPath, fallbackStandardFont, label) {
     return font;
   } catch {
     console.log(
-      `${label} font not found at ${fontPath}. Falling back to ${fallbackStandardFont}.`
+      `${label} font not found at ${fontPath}. Falling back to ${fallbackStandardFont}.`,
     );
     return pdfDoc.embedFont(fallbackStandardFont);
   }
@@ -95,22 +81,22 @@ async function loadFonts(pdfDoc) {
     pdfDoc,
     CONFIG.paths.fonts.name,
     StandardFonts.TimesRoman,
-    'Name'
+    "Name",
   );
   const bodyFont = await loadFontFromFile(
     pdfDoc,
-    CONFIG.paths.fonts.body,
+    CONFIG.paths.fonts.name,
     StandardFonts.Helvetica,
-    'Body'
+    "Body",
   );
-  const bodyBoldFont = await loadFontFromFile(
+  const courseFontFont = await loadFontFromFile(
     pdfDoc,
-    CONFIG.paths.fonts.bodyBold,
+    CONFIG.paths.fonts.courseFont,
     StandardFonts.HelveticaBold,
-    'Body bold'
+    "Body bold",
   );
 
-  return { nameFont, bodyFont, bodyBoldFont };
+  return { nameFont, bodyFont, courseFontFont };
 }
 
 function drawText(page, text, font, options) {
@@ -128,26 +114,77 @@ function drawText(page, text, font, options) {
 }
 
 async function generateCertificate(participant) {
-  const templateBytes = await fs.readFile(CONFIG.paths.template);
+  const templatePath = resolveTemplatePath(participant.position);
+  const templateBytes = await fs.readFile(templatePath);
   const pdfDoc = await PDFDocument.load(templateBytes);
   const page = pdfDoc.getPages()[0];
 
   const fonts = await loadFonts(pdfDoc);
 
-  drawText(page, participant.name, fonts.nameFont, CONFIG.text.name);
-  drawText(page, participant.course, fonts.bodyBoldFont, CONFIG.text.course);
-  drawText(page, participant.date, fonts.bodyFont, CONFIG.text.date);
+  drawText(
+    page,
+    participant.name?.toUpperCase(),
+    fonts.nameFont,
+    CONFIG.text.name,
+  );
+  drawText(
+    page,
+    participant.course?.toUpperCase(),
+    fonts.courseFontFont,
+    CONFIG.text.course,
+  );
 
   const outputBytes = await pdfDoc.save();
   const safeName = sanitizeFileName(participant.name);
-  const outputPath = path.join(CONFIG.paths.outputDir, `certificate_${safeName}.pdf`);
+  const outputPath = path.join(
+    CONFIG.paths.outputDir,
+    `certificate_${safeName}.pdf`,
+  );
 
   await fs.writeFile(outputPath, outputBytes);
-  return outputPath;
+  return { outputPath, outputBytes };
+}
+
+function createTransporter() {
+  return nodemailer.createTransport({
+    host: CONFIG.email.smtp.host,
+    port: CONFIG.email.smtp.port,
+    secure: CONFIG.email.smtp.secure,
+    auth: {
+      user: CONFIG.email.smtp.user,
+      pass: CONFIG.email.smtp.pass,
+    },
+  });
+}
+
+async function sendCertificateEmail(transporter, participant, outputBytes) {
+  if (!participant.email) {
+    console.log(`  Skipping email for ${participant.name}: no email address.`);
+    return;
+  }
+
+  const safeName = sanitizeFileName(participant.name);
+  const position = (participant.position || "").trim();
+
+  await transporter.sendMail({
+    from: `"${CONFIG.email.senderName}" <${CONFIG.email.smtp.user}>`,
+    to: participant.email,
+    subject: CONFIG.email.subject(participant),
+    text: CONFIG.email.body(participant),
+    attachments: [
+      {
+        filename: `certificate_${safeName}.pdf`,
+        content: Buffer.from(outputBytes),
+        contentType: "application/pdf",
+      },
+    ],
+  });
+
+  console.log(`  Email sent to ${participant.email}`);
 }
 
 async function main() {
-  console.log('Starting certificate generation...');
+  console.log("Starting certificate generation...");
 
   try {
     await ensureOutputDir(CONFIG.paths.outputDir);
@@ -155,15 +192,21 @@ async function main() {
     const participants = await loadParticipants(CONFIG.paths.csv);
     console.log(`Loaded ${participants.length} participant(s) from data.csv`);
 
+    const transporter = createTransporter();
+
     for (const participant of participants) {
-      console.log(`Generating certificate for: ${participant.name}`);
-      const outputPath = await generateCertificate(participant);
+      console.log(
+        `Generating certificate for: ${participant.name} (${participant.position})`,
+      );
+      const { outputPath, outputBytes } = await generateCertificate(participant);
       console.log(`Saved: ${outputPath}`);
+
+      await sendCertificateEmail(transporter, participant, outputBytes);
     }
 
-    console.log('All certificates generated successfully.');
+    console.log("All certificates generated and emailed successfully.");
   } catch (error) {
-    console.log('Certificate generation failed.');
+    console.log("Certificate generation failed.");
     console.log(error.message);
   }
 }
