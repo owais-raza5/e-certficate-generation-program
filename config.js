@@ -11,38 +11,45 @@ const CONFIG = {
     csv: path.join(__dirname, "data.csv"),
     outputDir: path.join(__dirname, "output"),
     fonts: {
-      name: path.join(__dirname, "fonts", "Calistoga-Regular.ttf"),
+      name: path.join(__dirname, "fonts", "Citadel-Script-Regular.ttf"),
       courseFont: path.join(__dirname, "fonts", "Calistoga-Regular.ttf"),
+      bold: path.join(__dirname, "fonts", "Poppins-Bold.ttf"),
     },
   },
 
   email: {
-    senderName: process.env.EMAIL_SENDER_NAME || "Certificate Team",
+    senderName: process.env.EMAIL_SENDER_NAME || "ZAB E-FEST'26",
     smtp: {
-      host: process.env.SMTP_HOST,
+      host: process.env.SMTP_HOST || "smtp.gmail.com",
       port: parseInt(process.env.SMTP_PORT || "587", 10),
-      secure: process.env.SMTP_SECURE === "true", // true for port 465, false for 587
+      secure: false,
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
-    subject: (participant) =>
-      `Your Certificate – ${participant.course}`,
-    body: (participant) =>
-      `Dear ${participant.name},\n\nCongratulations! Please find your certificate for "${participant.course}" attached.\n\nBest regards,\n${process.env.EMAIL_SENDER_NAME || "Certificate Team"}`,
+    subject: (p) => `Your ZAB E-FEST'26 Certificate – ${p.module}`,
+    body: (p) =>
+      `Dear ${p.name},\n\nCongratulations! Please find your certificate for "${p.module}" attached.\n\nBest regards,\n${process.env.EMAIL_SENDER_NAME || "ZAB E-FEST'26 Team"}`,
   },
 
   text: {
     name: {
-      y: 400,
-      size: 38,
+      y: 395,
+      size: 40,
       color: rgb(0.0549, 0.0823, 0.4627),
       autoCenter: true,
     },
-    course: {
+    module: {
       y: 310,
       size: 33,
       color: rgb(0.0549, 0.0823, 0.4627),
       autoCenter: true,
+    },
+    refNumber: {
+      x: 735,
+      y: 468,
+      size: 11,
+      color: rgb(0.0549, 0.0823, 0.4627),
+      autoCenter: false,
     },
   },
 };
